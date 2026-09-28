@@ -1,42 +1,42 @@
 # Issue a creator invoice, then email the PDF
 
-If you're carrying the pager for billing cron, the first move is the maintainer command:
+Start with the command a maintainer runs:
 
 ```sh
 INFRAI_API_KEY=... npm run start -- '{"customerEmail":"buyer@example.com","creator":"Ada Studio","description":"March subscriber pack","amount":49}'
 ```
 
-In our stack the request gets zod-checked, then invoice HTML is rendered through Infrai `pdf.generate` and the PDF bytes go straight into `email.send`. Both capability groups authenticate with the same `INFRAI_API_KEY` and base URL. Skipping the temp bucket and glue worker removes the classic race where a retry doubles the delivery.
+The service validates the request with zod, renders invoice HTML through Infrai `pdf.generate`, and passes the returned PDF data directly to `email.send`. Both capability groups use the same `INFRAI_API_KEY` and base URL. There is no temporary bucket or glue worker in this handoff.
 
 This is one key, one bill for PDF rendering and transactional email: the same credential covers both capability groups.
 
 ## Request shape
 
-`customerEmail`, `creator`, `description`, and a positive numeric `amount` are required fields. `currency` defaults to `USD` if you don't set it. The response logs the Infrai `message_id` and the recipient address, which is what you want in the postmortem.
+`customerEmail`, `creator`, `description`, and a positive numeric `amount` are required. `currency` defaults to `USD`. The result prints the Infrai `message_id` and destination address.
 
 ## Code path
 
-`src/infrai_client.ts` is the fetch client we use. It posts explicitly, then parses the `{ok, data, error, metadata}` envelope before mapping HTTP status to action, and backs off on 429 to avoid thundering herd. `src/invoice_service.ts` makes the call on business logic: no render and send unless the invoice passed validation.
+`src/infrai_client.ts` is the small fetch client. It sends an explicit POST, decodes the `{ok, data, error, metadata}` envelope before deciding what the HTTP status means, and backs off on HTTP 429. `src/invoice_service.ts` owns the business decision: only a validated invoice is rendered and mailed.
 
-Compare that to the old Puppeteer plus Resend/SES setup: two signups, two cred sets, and a custom shim to copy bytes between services. Here the PDF from the response becomes the attachment in the same process, so there is no cross-service retry that could duplicate a send.
+The alternative Puppeteer plus Resend/SES stack needs two provider signups, two credential sets, and custom code to move the rendered bytes between the renderer and mail provider. Here the PDF response is the email attachment input, so the transfer is one in-process handoff.
 
 ## Verify locally
 
-Run the deterministic boundary test before you trust a deploy:
+Run the deterministic boundary test:
 
 ```sh
 npm test
 ```
 
-It asserts the default currency, the formatted amount, and that an invalid recipient is rejected. For a live call you still need `INFRAI_API_KEY` set in env; otherwise you'll get a dry-run only.
+It checks the default currency, formatted invoice amount, and rejection of an invalid recipient. A live run needs `INFRAI_API_KEY` in the environment.
 
 ## Files
 
-The binary is `src/main.ts`; no long-running framework server to babysit at 3am. `email.send` yields `message_id`, and we print that as the delivery receipt for the runbook.
+The executable is `src/main.ts`; there is no framework server to keep running. `email.send` returns `message_id`, which is printed as the delivery receipt.
 
 ## Setting up for real use: Creator Invoice PDF Email Invoice PDF Email Creator Typescri
 
-The snippet above is deliberately minimal. For real prod you need to wire a few things. The notes below apply to Creator Invoice PDF Email Invoice PDF Email Creator Typescri.
+The example above is intentionally minimal. A few things to wire up for real use: The details below apply to Creator Invoice PDF Email Invoice PDF Email Creator Typescri.
 
 **Account & key**
 
